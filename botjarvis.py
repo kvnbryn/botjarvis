@@ -1,11 +1,11 @@
 # =================================================================
 #               BOT TELEGRAM MODERATOR & ASISTEN AI
-#             Versi Final v8.1 (Manual Topic Redirect)
+#             Versi Final v9.1 (Timed Message Deletion)
 # =================================================================
 # Fitur:
-# 1. Verifikasi Human (Captcha Tombol Emoji) saat join
-# 2. Sistem Mute-on-Join dengan Unlock via Pilihan Airdrop
-# 3. Sistem Verifikasi Partisipasi di dalam setiap Topik Airdrop
+# 1. Verifikasi Human (Captcha Tombol Emoji)
+# 2. Unlock Grup dengan pesan yang terhapus otomatis setelah durasi tertentu
+# 3. Verifikasi Partisipasi di dalam setiap Topik
 # 4. Perintah /getid untuk debugging
 # 5. Filter Kata Kasar & Quick Replies
 # 6. Penyimpanan data verifikasi di memori (reset saat restart)
@@ -16,12 +16,13 @@ import random
 import logging
 import google.generativeai as genai
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 from telegram import Update, Bot, MessageEntity, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, User
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 # Muat variabel dari file .env
 load_dotenv()
@@ -47,27 +48,25 @@ QUICK_REPLY_REACTION = ['done', 'sudah']
 REACTION_STICKER_ID = 'CAACAgEAAxkBAAE2GUVoRoU7LlAnvxHpl7b8it0V-ta8GwACywQAAvwrMEYAAZUQtKibugI2BA' 
 
 # --- KONFIGURASI GRUP & VERIFIKASI (PENTING!) ---
-GROUP_USERNAME_FOR_GETID = "username_grup_public" # Hanya untuk helper /getid
+GROUP_USERNAME_FOR_GETID = "username_grup_public"
+CLEANUP_DELAY_SECONDS = 60 # DURASI PESAN SEBELUM TERHAPUS OTOMATIS (DALAM DETIK)
 
-# LINK PENDAFTARAN AIRDROP (LINK KELUAR)
 AIRDROP_REGISTRATION_LINKS = {
-    'cryptox': "https://gleam.io/example-cryptox",
-    'blockseed': "https://forms.gle/example-blockseed",
-    'defichain': "https://discord.gg/example-defichain"
+    'Nebulai Airdrop': "https://gleam.io/example-Nebulai Airdrop",
+    'Midas Airdrop': "https://forms.gle/example-Midas Airdrop",
+    'DATS DePIN Airdrop': "https://discord.gg/example-DATS DePIN Airdrop"
 }
 
-# MAP ID TOPIK KE NAMA AIRDROP (DAPATKAN DARI /getid)
 TOPIC_ID_TO_NAME_MAP = {
-    2: "cryptox", 
-    3: "blockseed", 
-    4: "defichain"
+    2: "Nebulai Airdrop", 
+    3: "Midas Airdrop", 
+    4: "DATS DePIN Airdrop"
 }
 
-# LINK REDIRECT KE TOPIK (WAJIB DIISI MANUAL DARI HASIL /getid)
 TOPIC_REDIRECT_LINKS = {
-    'cryptox': "https://t.me/c/12345/2",    # GANTI DENGAN LINK LENGKAP KE TOPIK CRYPTOX
-    'blockseed': "https://t.me/c/12345/3",  # GANTI DENGAN LINK LENGKAP KE TOPIK BLOCKSEED
-    'defichain': "https://t.me/c/12345/4"   # GANTI DENGAN LINK LENGKAP KE TOPIK DEFICHAIN
+    'Nebulai Airdrop': "https://nebulai.network/opencompute?invite_by=hQbsZH",
+    'Midas Airdrop': "https://t.me/DATSAPP_bot/datsapp?startapp=7679410978",
+    'DATS DePIN Airdrop': "https://t.me/MidasRWA_bot/app?startapp=ref_61edca15-c3f8-43c0-a6e8-9ee6dd67fd63"
 }
 
 
@@ -84,15 +83,29 @@ def get_time_based_greeting() -> str:
     elif 15 <= hour < 19: return "Selamat Sore"
     else: return "Selamat Malam"
 
+def get_time_based_greeting_en() -> str:
+    tz = ZoneInfo("Asia/Makassar")
+    now = datetime.now(tz)
+    hour = now.hour
+    if 4 <= hour < 12: return "good morning"
+    elif 12 <= hour < 19: return "good afternoon"
+    else: return "good evening"
+
 async def get_gemini_response(user_prompt: str) -> str:
     if not GEMINI_API_KEY: return "Maaf, API Key Gemini belum diatur."
     try:
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        response = await model.generate_content_async(user_prompt)
+        system_instruction = (
+            "halo bro, jadi disini lu harus sedikit humoris, dan beri jawaban dengan santai tapi tetap profesional, "
+            "perhatikan tanda baca dan blokir simbol simbol seperti bintang (*), hindari formalitas yang kaku."
+        )
+        final_prompt = f"{system_instruction}\n\nUser:\n{user_prompt}"
+        response = await model.generate_content_async(final_prompt)
         return response.text
     except Exception as e:
         logger.error(f"Error saat menghubungi API Gemini: {e}")
         return "Maaf, terjadi kesalahan saat menghubungi AI Gemini."
+
 
 # --- HANDLER PERINTAH ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,87 +128,77 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def get_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat.id
     thread_id = update.message.message_thread_id
-    
-    response_text = (
-        f"<b>🛠️ Detail ID & Link 🛠️</b>\n\n"
-        f"Gunakan info ini untuk mengisi konfigurasi di file kode bot.\n\n"
-        f"<b>Chat ID:</b> <code>{chat_id}</code>\n"
-    )
-
+    response_text = (f"<b>🛠️ Detail ID & Link 🛠️</b>\n\n"
+                     f"Gunakan info ini untuk mengisi konfigurasi di file kode bot.\n\n"
+                     f"<b>Chat ID:</b> <code>{chat_id}</code>\n")
     if thread_id:
-        response_text += f"<b>Message Thread ID (ID Topik):</b> <code>{thread_id}</code>\n\n"
-        response_text += "<b>👇 SALIN SALAH SATU LINK DI BAWAH INI 👇</b>\n\n"
-        response_text += f"▪️ <b>Link untuk Grup Private:</b>\n<code>https://t.me/c/{str(chat_id).replace('-100', '')}/{thread_id}</code>\n\n"
+        response_text += (f"<b>Message Thread ID (ID Topik):</b> <code>{thread_id}</code>\n\n"
+                          "<b>👇 SALIN SALAH SATU LINK DI BAWAH INI 👇</b>\n\n"
+                          f"▪️ <b>Link untuk Grup Private:</b>\n<code>https://t.me/c/{str(chat_id).replace('-100', '')}/{thread_id}</code>\n\n")
         if GROUP_USERNAME_FOR_GETID != "username_grup_public":
             response_text += f"▪️ <b>Link untuk Grup Public:</b>\n<code>https://t.me/{GROUP_USERNAME_FOR_GETID}/{thread_id}</code>"
         else:
-            response_text += f"▪️ <b>Link untuk Grup Public:</b> (Isi GROUP_USERNAME_FOR_GETID di kode untuk melihat contoh)"
+            response_text += "▪️ <b>Link untuk Grup Public:</b> (Isi GROUP_USERNAME_FOR_GETID di kode untuk melihat contoh)"
     else:
         response_text += "Perintah ini dijalankan di luar topik (General)."
-
     await update.message.reply_html(response_text)
 
 # --- ALUR VERIFIKASI ---
 
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tugas yang dijadwalkan untuk menghapus pesan."""
+    job = context.job
+    try:
+        await context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
+        logger.info(f"Pesan verifikasi {job.data['message_id']} telah dihapus secara otomatis.")
+    except BadRequest as e:
+        # Menangani jika pesan sudah dihapus manual oleh admin
+        if "message to delete not found" in e.message.lower():
+            logger.warning(f"Pesan {job.data['message_id']} sudah dihapus sebelumnya.")
+        else:
+            logger.error(f"Error saat menghapus pesan {job.data['message_id']}: {e}")
+    except Exception as e:
+        logger.error(f"Error tak terduga saat menghapus pesan {job.data['message_id']}: {e}")
+
+
 async def send_airdrop_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE, member: User) -> None:
-    chat_id = update.effective_chat.id
-    welcome_text = (f"<b>WELCOME TO AIRDROP HUNTER, {member.mention_html()}!</b>\n\n"
-                    "🚨 <b>ALERT! FREE AIRDROPS WAITING FOR YOU!</b> 🚨\n"
-                    "CHOOSE & REGISTER NOW BEFORE IT'S GONE!\n\n"
-                    "🔒 <b>CHAT FEATURE LOCKED</b> 🔒\n"
-                    "To unlock access to Airdrop Hunter's chat group, you MUST select one of the airdrops below and register immediately!\n---\n\n"
-                    "<b><u>🔥 TODAY'S HOT AIRDROP PICKS 🔥</u></b>\n\n"
-                    "💎 <b>[INSTANT] CryptoX</b>\n<i>50 FREE TOKENS + Whitelist Spot</i>\n"
-                    "<u>Quick Requirements:</u>\n- Follow @CryptoX on Twitter\n- Retweet pinned post\n\n"
-                    "💰 <b>[GUARANTEED] BlockSeed</b>\n<i>10 USDT + 100 TOKENS (Limited!)</i>\n"
-                    "<u>Requirements:</u>\n- 5-min KYC Verification\n- Join Telegram Group\n\n"
-                    "🖼️ <b>[EXCLUSIVE] DeFiChain NFT</b>\n<i>Limited Edition NFT (Worth Millions!)</i>\n"
-                    "<u>Requirements:</u>\n- Join Discord Server\n- Fill 3-min form\n\n---\n"
-                    "<b>WHAT ARE YOU WAITING FOR?</b>\n\n<b>HURRY! Slots Filling Fast!</b>\n"
-                    "After completing registration, you'll get UNLIMITED ACCESS to our exclusive airdrop chat!\n"
-                    "<i>Discuss strategies, get insider tips, and join private giveaways!</i>\n"
-                    "<u>No selection = No access!</u>\n\n<b>CLICK NOW BEFORE IT'S TOO LATE!</b>")
+    welcome_text = (
+        "🔒 UNLOCK PRIVATE CHAT 🔒  \n"
+        "Choose 1 airdrop to join:  \n\n"
+        "1️⃣ Nebulai Airdrop - Top Pick 🔥  \n"
+        "2️⃣ Midas Airdrop - Hot Opportunity �  \n"
+        "3️⃣ DATS DePIN Airdrop - New & Trending 📈  \n\n"
+        "✅ Quick verification  \n"
+        "👉 Select now!  \n\n"
+        "*Welcome to our elite community!* 🚀  \n\n"
+        "*(No bots allowed)*"
+    )
+
     
-    keyboard = [[InlineKeyboardButton("✅ Choose CryptoX Airdrop", callback_data=f'unlock:{member.id}:cryptox')],
-                [InlineKeyboardButton("✅ Choose BlockSeed Airdrop", callback_data=f'unlock:{member.id}:blockseed')],
-                [InlineKeyboardButton("✅ Choose DeFiChain NFT Airdrop", callback_data=f'unlock:{member.id}:defichain')]]
+    keyboard = [[InlineKeyboardButton("Airdrop 1️⃣", callback_data=f'unlock:{member.id}:Nebulai Airdrop')],
+                [InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
+                [InlineKeyboardButton("Airdrop 3️⃣", callback_data=f'unlock:{member.id}:DATS DePIN Airdrop')]]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.callback_query.edit_message_text(
-        text=welcome_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup,
-        disable_web_page_preview=True
-    )
+    await update.callback_query.edit_message_text(text=welcome_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
 
 async def welcome_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     mute_permissions = ChatPermissions(can_send_messages=False)
-    
     for member in update.message.new_chat_members:
         try:
             await context.bot.restrict_chat_member(chat_id=chat_id, user_id=member.id, permissions=mute_permissions)
             logger.info(f"User {member.first_name} ({member.id}) telah dibisukan & menunggu verifikasi human.")
-            
             emojis = ["✈️", "🚀", "🛸", "🛰️", "🚁", "⛵️", "🚗", "🚜", "🚲"]
             correct_emoji = random.choice(emojis)
             random.shuffle(emojis)
-            
             context.user_data['correct_emoji'] = correct_emoji
-            
-            prompt_text = (
-                f"Hi {member.mention_html()}, one last check to prove you're human.\n\n"
-                f"Please press the <b>{correct_emoji}</b> button to get access."
-            )
-            
+            prompt_text = (f"Hi {member.mention_html()}, one last check to prove you're human.\n\n"
+                           f"Please press the <b>{correct_emoji}</b> button to get access.")
             buttons = [InlineKeyboardButton(e, callback_data=f"hverify:{member.id}:{e}") for e in emojis]
             keyboard = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await context.bot.send_message(
-                chat_id=chat_id, text=prompt_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
-            )
+            await context.bot.send_message(chat_id=chat_id, text=prompt_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             await update.message.delete()
         except Exception as e:
             logger.error(f"Gagal memproses anggota baru untuk verifikasi human: {e}")
@@ -210,20 +213,16 @@ async def human_verification_handler(update: Update, context: ContextTypes.DEFAU
     except (ValueError, IndexError):
         await query.answer("Invalid button data. Please try again.", show_alert=True)
         return
-
     if user_who_clicked.id != user_id_to_verify:
         await query.answer("This verification is not for you.", show_alert=True)
         return
-
     correct_emoji = context.user_data.get('correct_emoji')
-
     if correct_emoji and chosen_emoji == correct_emoji:
         logger.info(f"User {user_who_clicked.first_name} ({user_who_clicked.id}) berhasil verifikasi human.")
         await query.answer("✅ Verification successful!", show_alert=False)
-        del context.user_data['correct_emoji']
+        if 'correct_emoji' in context.user_data: del context.user_data['correct_emoji']
         await send_airdrop_selection_message(update, context, user_who_clicked)
     else:
-        logger.warning(f"User {user_who_clicked.first_name} ({user_who_clicked.id}) gagal verifikasi human.")
         await query.answer("❌ Wrong answer. Please try again.", show_alert=True)
 
 async def airdrop_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -237,29 +236,38 @@ async def airdrop_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     except (IndexError, ValueError):
         await query.answer("Invalid button data. Please contact an admin.", show_alert=True)
         return
-
     if user_who_clicked.id != user_id_to_verify:
         await query.answer(text="This is not for you!", show_alert=True)
         return
-
     unmute_permissions = ChatPermissions(can_send_messages=True,can_send_audios=True,can_send_documents=True,can_send_photos=True,can_send_videos=True,can_send_video_notes=True,can_send_voice_notes=True,can_send_polls=True,can_send_other_messages=True,can_add_web_page_previews=True)
-    
     try:
         await context.bot.restrict_chat_member(chat_id=query.message.chat_id,user_id=user_id_to_verify,permissions=unmute_permissions)
         logger.info(f"User {user_who_clicked.first_name} ({user_id_to_verify}) telah di-unmute.")
         
-        # --- LOGIKA BARU: MENGGUNAKAN LINK YANG SUDAH ANDA MASUKKAN MANUAL ---
-        chosen_link = TOPIC_REDIRECT_LINKS.get(airdrop_choice, "https://t.me") # Fallback jika key salah
-
-        airdrop_names = {'cryptox': "CryptoX", 'blockseed': "BlockSeed", 'defichain': "DeFiChain NFT"}
+        chosen_link = TOPIC_REDIRECT_LINKS.get(airdrop_choice, "https://t.me")
+        airdrop_names = {'Nebulai Airdrop': "Airdrop 1️⃣", 'Airdrop 2️⃣': "Airdrop 3️⃣"}
         chosen_name = airdrop_names.get(airdrop_choice, "the selected airdrop")
         
-        confirmation_text = (f"✅ <b>ACCESS GRANTED! Welcome, {user_who_clicked.mention_html()}!</b> ✅\n\n"
-                             f"Thank you for choosing the <b>{chosen_name}</b> airdrop.\n\n"
-                             "Your chat access is now <b>UNLOCKED</b>. You can start discussing strategies and getting tips from other hunters!\n\n"
-                             f"➡️ <b><a href='{chosen_link}'>Click here to go to the {chosen_name} topic</a></b> to complete your registration.\n\nHappy hunting!")
+        confirmation_text = (f"✅ <b>ACCESS GRANTED! Welcome, {user_who_clicked.mention_html()}!</b>\n\n"
+                             f"Thank you for choosing the <b>{chosen_name}</b> airdrop. You can now chat.\n\n"
+                             f"<i>This message will be deleted automatically in {CLEANUP_DELAY_SECONDS} seconds.</i>")
         
-        await query.edit_message_text(text=confirmation_text,parse_mode=ParseMode.HTML,reply_markup=None,disable_web_page_preview=True)
+        keyboard = [[InlineKeyboardButton(f"➡️ {chosen_name}", url=chosen_link)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        sent_message = await query.edit_message_text(text=confirmation_text,parse_mode=ParseMode.HTML,reply_markup=reply_markup,disable_web_page_preview=True)
+        
+        # --- JADWALKAN PENGHAPUSAN PESAN ---
+        chat_id = query.message.chat_id
+        # edit_message_text mengembalikan True, bukan objek Message. Kita ambil ID dari query awal.
+        message_id = query.message.message_id
+        context.job_queue.run_once(
+            delete_message_job, 
+            when=timedelta(seconds=CLEANUP_DELAY_SECONDS), 
+            data={'chat_id': chat_id, 'message_id': message_id},
+            name=f"delete_{chat_id}_{message_id}"
+        )
+
     except Exception as e:
         logger.error(f"Gagal unmute atau edit pesan untuk user {user_id_to_verify}: {e}")
 
@@ -274,22 +282,14 @@ async def topic_verification_handler(update: Update, context: ContextTypes.DEFAU
     except (IndexError, ValueError):
         await query.answer("Invalid button data. Please contact an admin.", show_alert=True)
         return
-
     if user_who_clicked.id != user_id_to_verify:
         await query.answer(text="This button is for the new member.", show_alert=True)
         return
-
     VERIFIED_USERS[topic_name].add(user_id_to_verify)
-    logger.info(f"User {user_who_clicked.first_name} ({user_id_to_verify}) telah diverifikasi untuk topik '{topic_name}'.")
-    
-    await query.edit_message_text(
-        text=f"✅ <b>Verification Successful!</b>\n\nThank you, {user_who_clicked.mention_html()}. You can now participate in this topic.",
-        parse_mode=ParseMode.HTML,reply_markup=None
-    )
+    await query.edit_message_text(text=f"✅ <b>Verification Successful!</b>\n\nThank you, {user_who_clicked.mention_html()}. You can now participate in this topic.", parse_mode=ParseMode.HTML, reply_markup=None)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or (not update.message.text and not update.message.caption):
-        return
+    if not update.message or (not update.message.text and not update.message.caption): return
     user = update.effective_user
     chat_id = update.effective_chat.id
     thread_id = update.message.message_thread_id
@@ -306,7 +306,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await update.message.delete()
                     reg_link = AIRDROP_REGISTRATION_LINKS.get(topic_name, "https://google.com")
                     prompt_text = (f"Hi {user.mention_html()}, one more step!\n\n"
-                                 f"To participate in the <b>{topic_name.capitalize()}</b> discussion, you must register for the airdrop first. This is to ensure our community is filled with serious hunters!\n\n"
+                                 f"To participate in the <b>{topic_name.capitalize()}</b> discussion, you must register for the airdrop first.\n\n"
                                  f"After registering, click the button below to unlock chat access for this topic.")
                     keyboard = [[InlineKeyboardButton(f"➡️ Register for {topic_name.capitalize()} Airdrop", url=reg_link)],
                                 [InlineKeyboardButton(f"✅ I Have Registered, Verify Me!", callback_data=f"tverify:{user.id}:{topic_name}")]]
@@ -326,7 +326,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         except Exception as e:
             logger.error(f"Gagal hapus pesan kasar: {e}")
-            return
     
     if message_text_lower in QUICK_REPLY_GREETING:
         await update.message.reply_text(f"Hai {get_time_based_greeting_en()}, how are you today?")
@@ -336,7 +335,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             await update.message.reply_sticker(sticker=REACTION_STICKER_ID)
         except Exception as e:
-            logger.error(f"Gagal kirim stiker: {e}. Mengirim fallback text.")
             await update.message.reply_text("Oke, beres! 👍")
         return
     
@@ -344,23 +342,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     bot_username = bot_info.username
     is_reply_to_bot = update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_info.id
     is_mentioning_bot = f"@{bot_username}" in message_text
-    triggered_by_keyword = False
-    prompt = message_text
-    for trigger in TRIGGER_WORDS:
-        if message_text_lower.startswith(trigger):
-            triggered_by_keyword = True
-            prompt = message_text[len(trigger):].strip()
-            break
+    triggered_by_keyword = any(message_text_lower.startswith(trigger) for trigger in TRIGGER_WORDS)
             
     if update.message.chat.type == "private" or is_reply_to_bot or is_mentioning_bot or triggered_by_keyword:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing', message_thread_id=thread_id)
-        if is_mentioning_bot:
-            prompt = prompt.replace(f"@{bot_username}", "").strip()
+        prompt = message_text.replace(f"@{bot_username}", "").strip() if is_mentioning_bot else message_text
+        if triggered_by_keyword:
+            for trigger in TRIGGER_WORDS:
+                if message_text_lower.startswith(trigger):
+                    prompt = message_text[len(trigger):].strip()
+                    break
         if not prompt: prompt = "Sapa aku kembali dalam bahasa Indonesia dan tanyakan kabarku"
         ai_response = await get_gemini_response(prompt)
         final_response = f"{get_time_based_greeting()}, {user.first_name}! 👋\n\n{ai_response}"
         await update.message.reply_text(final_response)
-
 
 # --- FUNGSI UTAMA UNTUK MENJALANKAN BOT ---
 def main() -> None:
@@ -379,7 +374,7 @@ def main() -> None:
     
     application.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
     
-    print("Bot versi final v8.1 (Manual Topic Redirect) sedang berjalan... Tekan Ctrl+C untuk berhenti.")
+    print("Bot versi final v9.1 (Timed Message Deletion) sedang berjalan... Tekan Ctrl+C untuk berhenti.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
