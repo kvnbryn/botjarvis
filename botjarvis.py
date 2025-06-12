@@ -1,14 +1,14 @@
 # =================================================================
 #               BOT TELEGRAM MODERATOR & ASISTEN AI
-#             Versi Final v9.1 (Timed Message Deletion)
+#             Versi Final v9.2 (Advanced Anti-Link)
 # =================================================================
 # Fitur:
 # 1. Verifikasi Human (Captcha Tombol Emoji)
-# 2. Unlock Grup dengan pesan yang terhapus otomatis setelah durasi tertentu
+# 2. Unlock Grup dengan pesan yang terhapus otomatis
 # 3. Verifikasi Partisipasi di dalam setiap Topik
-# 4. Perintah /getid untuk debugging
-# 5. Filter Kata Kasar & Quick Replies
-# 6. Penyimpanan data verifikasi di memori (reset saat restart)
+# 4. Anti-Link Cerdas (Hanya 1 Topik Diizinkan + Pengecualian Admin)
+# 5. Perintah /getid untuk debugging
+# 6. Filter Kata Kasar & Quick Replies
 # =================================================================
 
 import os
@@ -49,26 +49,27 @@ REACTION_STICKER_ID = 'CAACAgEAAxkBAAE2GUVoRoU7LlAnvxHpl7b8it0V-ta8GwACywQAAvwrM
 
 # --- KONFIGURASI GRUP & VERIFIKASI (PENTING!) ---
 GROUP_USERNAME_FOR_GETID = "username_grup_public"
-CLEANUP_DELAY_SECONDS = 60 # DURASI PESAN SEBELUM TERHAPUS OTOMATIS (DALAM DETIK)
+CLEANUP_DELAY_SECONDS = 90
+
+# --- KONFIGURASI ANTI-LINK ---
+# Dapatkan ID dari /getid di topik yang kamu izinkan untuk share link
+LINK_ALLOWED_TOPIC_ID = 5 # GANTI DENGAN ID TOPIK UNTUK SHARE LINK
 
 AIRDROP_REGISTRATION_LINKS = {
     'Nebulai Airdrop': "https://gleam.io/example-Nebulai Airdrop",
     'Midas Airdrop': "https://forms.gle/example-Midas Airdrop",
     'DATS DePIN Airdrop': "https://discord.gg/example-DATS DePIN Airdrop"
 }
-
 TOPIC_ID_TO_NAME_MAP = {
     2: "Nebulai Airdrop", 
     3: "Midas Airdrop", 
     4: "DATS DePIN Airdrop"
 }
-
 TOPIC_REDIRECT_LINKS = {
     'Nebulai Airdrop': "https://nebulai.network/opencompute?invite_by=hQbsZH",
     'Midas Airdrop': "https://t.me/DATSAPP_bot/datsapp?startapp=7679410978",
     'DATS DePIN Airdrop': "https://t.me/MidasRWA_bot/app?startapp=ref_61edca15-c3f8-43c0-a6e8-9ee6dd67fd63"
 }
-
 
 # --- PENYIMPANAN DATA VERIFIKASI (IN-MEMORY) ---
 VERIFIED_USERS = defaultdict(set)
@@ -95,17 +96,14 @@ async def get_gemini_response(user_prompt: str) -> str:
     if not GEMINI_API_KEY: return "Maaf, API Key Gemini belum diatur."
     try:
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        system_instruction = (
-            "halo bro, jadi disini lu harus sedikit humoris, dan beri jawaban dengan santai tapi tetap profesional, "
-            "perhatikan tanda baca dan blokir simbol simbol seperti bintang (*), hindari formalitas yang kaku."
-        )
+        system_instruction = ("halo bro, jadi disini lu harus sedikit humoris, dan beri jawaban dengan santai tapi tetap profesional, "
+                              "perhatikan tanda baca dan blokir simbol simbol seperti bintang (*), hindari formalitas yang kaku.")
         final_prompt = f"{system_instruction}\n\nUser:\n{user_prompt}"
         response = await model.generate_content_async(final_prompt)
         return response.text
     except Exception as e:
         logger.error(f"Error saat menghubungi API Gemini: {e}")
         return "Maaf, terjadi kesalahan saat menghubungi AI Gemini."
-
 
 # --- HANDLER PERINTAH ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -121,7 +119,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "▫️ /help - Bantuan\n"
         "▫️ /getid - (Admin) Mendapatkan ID & Link Contoh.\n\n"
         "<b>Fitur Otomatis:</b>\n"
-        "▪️ Filter Kata Kasar\n"
+        "▪️ Filter Kata Kasar & Anti-Link\n"
         "▪️ Sistem Verifikasi Berlapis untuk Airdrop"
     )
 
@@ -143,16 +141,53 @@ async def get_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         response_text += "Perintah ini dijalankan di luar topik (General)."
     await update.message.reply_html(response_text)
 
+# --- HANDLER MODERASI ---
+
+async def anti_link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Menghapus link dari non-admin di topik yang tidak diizinkan."""
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    thread_id = update.message.message_thread_id
+
+    # 1. Selalu izinkan admin
+    member = await context.bot.get_chat_member(chat_id, user.id)
+    if member.status in ['creator', 'administrator']:
+        return
+
+    # 2. Izinkan di chat General (bukan topik)
+    if thread_id is None:
+        return
+
+    # 3. Izinkan di topik khusus share link
+    if thread_id == LINK_ALLOWED_TOPIC_ID:
+        return
+
+    # 4. Jika semua kondisi di atas tidak terpenuhi, hapus pesan
+    try:
+        await update.message.delete()
+        warning_text = (
+            f"Hi {user.mention_html()}, pesan Anda dihapus.\n"
+            f"Dilarang mengirim link di topik ini. Silakan gunakan topik yang telah disediakan untuk berbagi link."
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            text=warning_text,
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Menghapus link dari user {user.first_name} di topik {thread_id}")
+    except Exception as e:
+        logger.error(f"Gagal menghapus link dari user {user.first_name}: {e}")
+
+
 # --- ALUR VERIFIKASI ---
 
 async def delete_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Tugas yang dijadwalkan untuk menghapus pesan."""
     job = context.job
     try:
         await context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
         logger.info(f"Pesan verifikasi {job.data['message_id']} telah dihapus secara otomatis.")
     except BadRequest as e:
-        # Menangani jika pesan sudah dihapus manual oleh admin
         if "message to delete not found" in e.message.lower():
             logger.warning(f"Pesan {job.data['message_id']} sudah dihapus sebelumnya.")
         else:
@@ -160,25 +195,19 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Error tak terduga saat menghapus pesan {job.data['message_id']}: {e}")
 
-
 async def send_airdrop_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE, member: User) -> None:
-    welcome_text = (
-        "🔒 UNLOCK PRIVATE CHAT 🔒  \n"
-        "Choose 1 airdrop to join:  \n\n"
-        "1️⃣ Nebulai Airdrop - Top Pick 🔥  \n"
-        "2️⃣ Midas Airdrop - Hot Opportunity �  \n"
-        "3️⃣ DATS DePIN Airdrop - New & Trending 📈  \n\n"
-        "✅ Quick verification  \n"
-        "👉 Select now!  \n\n"
-        "*Welcome to our elite community!* 🚀  \n\n"
-        "*(No bots allowed)*"
-    )
-
-    
+    welcome_text = ("🔒 UNLOCK PRIVATE CHAT 🔒 \n"
+                    "Choose 1 airdrop to join: \n\n"
+                    "1️⃣ Nebulai Airdrop - Top Pick 🔥 \n"
+                    "2️⃣ Midas Airdrop - Hot Opportunity � \n"
+                    "3️⃣ DATS DePIN Airdrop - New & Trending 📈 \n\n"
+                    "✅ Quick verification \n"
+                    "👉 Select now! \n\n"
+                    "*Welcome to our elite community!* 🚀 \n\n"
+                    "*(No bots allowed)*")
     keyboard = [[InlineKeyboardButton("Airdrop 1️⃣", callback_data=f'unlock:{member.id}:Nebulai Airdrop')],
                 [InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
                 [InlineKeyboardButton("Airdrop 3️⃣", callback_data=f'unlock:{member.id}:DATS DePIN Airdrop')]]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text=welcome_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
 
@@ -243,23 +272,16 @@ async def airdrop_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     try:
         await context.bot.restrict_chat_member(chat_id=query.message.chat_id,user_id=user_id_to_verify,permissions=unmute_permissions)
         logger.info(f"User {user_who_clicked.first_name} ({user_id_to_verify}) telah di-unmute.")
-        
         chosen_link = TOPIC_REDIRECT_LINKS.get(airdrop_choice, "https://t.me")
-        airdrop_names = {'Nebulai Airdrop': "Airdrop 1️⃣", 'Airdrop 2️⃣': "Airdrop 3️⃣"}
+        airdrop_names = {'Nebulai Airdrop': "Airdrop 1️⃣", 'Midas Airdrop': "Airdrop 2️⃣", 'DATS DePIN Airdrop': "Airdrop 3️⃣"}
         chosen_name = airdrop_names.get(airdrop_choice, "the selected airdrop")
-        
         confirmation_text = (f"✅ <b>ACCESS GRANTED! Welcome, {user_who_clicked.mention_html()}!</b>\n\n"
                              f"Thank you for choosing the <b>{chosen_name}</b> airdrop. You can now chat.\n\n"
                              f"<i>This message will be deleted automatically in {CLEANUP_DELAY_SECONDS} seconds.</i>")
-        
         keyboard = [[InlineKeyboardButton(f"➡️ {chosen_name}", url=chosen_link)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         sent_message = await query.edit_message_text(text=confirmation_text,parse_mode=ParseMode.HTML,reply_markup=reply_markup,disable_web_page_preview=True)
-        
-        # --- JADWALKAN PENGHAPUSAN PESAN ---
         chat_id = query.message.chat_id
-        # edit_message_text mengembalikan True, bukan objek Message. Kita ambil ID dari query awal.
         message_id = query.message.message_id
         context.job_queue.run_once(
             delete_message_job, 
@@ -267,7 +289,6 @@ async def airdrop_button_handler(update: Update, context: ContextTypes.DEFAULT_T
             data={'chat_id': chat_id, 'message_id': message_id},
             name=f"delete_{chat_id}_{message_id}"
         )
-
     except Exception as e:
         logger.error(f"Gagal unmute atau edit pesan untuk user {user_id_to_verify}: {e}")
 
@@ -363,18 +384,27 @@ def main() -> None:
     
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
+    # Filter untuk link
+    link_filter = filters.Entity(MessageEntity.URL) | filters.Entity(MessageEntity.TEXT_LINK)
+
+    # Handler Perintah
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("getid", get_id_command))
     
+    # Handler Event & Tombol
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_member))
     application.add_handler(CallbackQueryHandler(human_verification_handler, pattern=r'^hverify:'))
     application.add_handler(CallbackQueryHandler(airdrop_button_handler, pattern=r'^unlock:'))
     application.add_handler(CallbackQueryHandler(topic_verification_handler, pattern=r'^tverify:'))
     
-    application.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message))
+    # Handler Moderasi (LINK) - Harus sebelum handle_message umum
+    application.add_handler(MessageHandler(link_filter, anti_link_handler))
+
+    # Handler Pesan Umum (teks biasa, sapaan, AI) - Pastikan tidak menangani link lagi
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~link_filter, handle_message))
     
-    print("Bot versi final v9.1 (Timed Message Deletion) sedang berjalan... Tekan Ctrl+C untuk berhenti.")
+    print("Bot versi final v9.2 (Advanced Anti-Link) sedang berjalan... Tekan Ctrl+C untuk berhenti.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
