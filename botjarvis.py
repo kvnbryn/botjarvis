@@ -53,7 +53,7 @@ CLEANUP_DELAY_SECONDS = 90
 
 # --- KONFIGURASI ANTI-LINK ---
 # Dapatkan ID dari /getid di topik yang kamu izinkan untuk share link
-LINK_ALLOWED_TOPIC_ID = 5 # GANTI DENGAN ID TOPIK UNTUK SHARE LINK
+LINK_ALLOWED_TOPIC_ID = 102 # GANTI DENGAN ID TOPIK UNTUK SHARE LINK
 
 AIRDROP_REGISTRATION_LINKS = {
     'Nebulai Airdrop': "https://gleam.io/example-Nebulai Airdrop",
