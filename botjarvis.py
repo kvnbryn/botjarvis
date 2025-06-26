@@ -56,17 +56,17 @@ CLEANUP_DELAY_SECONDS = 90
 LINK_ALLOWED_TOPIC_ID = 8065 # GANTI DENGAN ID TOPIK UNTUK SHARE LINK
 
 AIRDROP_REGISTRATION_LINKS = {
-    'Nebulai Airdrop': "https://gleam.io/example-Nebulai Airdrop",
+    'Flagship Ai Agent Airdrop': "https://t.me/Flagshipfyibot?start=avv854st9pmr39r5zkp2y53b",
     'Midas Airdrop': "https://forms.gle/example-Midas Airdrop",
     'DATS DePIN Airdrop': "https://discord.gg/example-DATS DePIN Airdrop"
 }
 TOPIC_ID_TO_NAME_MAP = {
-    2: "Nebulai Airdrop", 
+    2: "Flagship Ai Agent Airdrop", 
     3: "Midas Airdrop", 
     4: "DATS DePIN Airdrop"
 }
 TOPIC_REDIRECT_LINKS = {
-    'Nebulai Airdrop': "https://nebulai.network/opencompute?invite_by=hQbsZH",
+    'Flagship Ai Agent Airdrop': "https://t.me/Flagshipfyibot?start=avv854st9pmr39r5zkp2y53b",
     'Midas Airdrop': "https://t.me/DATSAPP_bot/datsapp?startapp=7679410978",
     'DATS DePIN Airdrop': "https://t.me/MidasRWA_bot/app?startapp=ref_61edca15-c3f8-43c0-a6e8-9ee6dd67fd63"
 }
