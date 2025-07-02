@@ -201,8 +201,8 @@ async def send_airdrop_selection_message(update: Update, context: ContextTypes.D
                     "👉 Select now! \n\n"
                     "*Welcome to our elite community!* 🚀 \n\n"
                     "*(No bots allowed)*")
-    keyboard = [[InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
-                [InlineKeyboardButton("Airdrop 3️⃣", callback_data=f'unlock:{member.id}:DATS DePIN Airdrop')]]
+    keyboard = [[InlineKeyboardButton("Airdrop 1️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
+                [InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:DATS DePIN Airdrop')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text=welcome_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
 
