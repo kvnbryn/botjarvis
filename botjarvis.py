@@ -56,17 +56,14 @@ CLEANUP_DELAY_SECONDS = 90
 LINK_ALLOWED_TOPIC_ID = 8065 # GANTI DENGAN ID TOPIK UNTUK SHARE LINK
 
 AIRDROP_REGISTRATION_LINKS = {
-    'Flagship Ai Agent Airdrop': "https://t.me/Flagshipfyibot?start=avv854st9pmr39r5zkp2y53b",
     'Midas Airdrop': "https://forms.gle/example-Midas Airdrop",
     'DATS DePIN Airdrop': "https://discord.gg/example-DATS DePIN Airdrop"
 }
 TOPIC_ID_TO_NAME_MAP = {
-    2: "Flagship Ai Agent Airdrop", 
     3: "Midas Airdrop", 
     4: "DATS DePIN Airdrop"
 }
 TOPIC_REDIRECT_LINKS = {
-    'Flagship Ai Agent Airdrop': "https://t.me/Flagshipfyibot?start=avv854st9pmr39r5zkp2y53b",
     'Midas Airdrop': "https://t.me/DATSAPP_bot/datsapp?startapp=7679410978",
     'DATS DePIN Airdrop': "https://t.me/MidasRWA_bot/app?startapp=ref_61edca15-c3f8-43c0-a6e8-9ee6dd67fd63"
 }
@@ -198,15 +195,13 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def send_airdrop_selection_message(update: Update, context: ContextTypes.DEFAULT_TYPE, member: User) -> None:
     welcome_text = ("🔒 UNLOCK PRIVATE CHAT 🔒 \n"
                     "Choose 1 airdrop to join: \n\n"
-                    "1️⃣ Flagship Ai Agent Airdrop - Top Pick 🔥 \n"
-                    "2️⃣ Midas Airdrop - Hot Opportunity � \n"
-                    "3️⃣ DATS DePIN Airdrop - New & Trending 📈 \n\n"
+                    "1️⃣ Midas Airdrop - Hot Opportunity � \n"
+                    "2️⃣ DATS DePIN Airdrop - New & Trending 📈 \n\n"
                     "✅ Quick verification \n"
                     "👉 Select now! \n\n"
                     "*Welcome to our elite community!* 🚀 \n\n"
                     "*(No bots allowed)*")
-    keyboard = [[InlineKeyboardButton("Airdrop 1️⃣", callback_data=f'unlock:{member.id}:Flagship Ai Agent Airdrop')],
-                [InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
+    keyboard = [[InlineKeyboardButton("Airdrop 2️⃣", callback_data=f'unlock:{member.id}:Midas Airdrop')],
                 [InlineKeyboardButton("Airdrop 3️⃣", callback_data=f'unlock:{member.id}:DATS DePIN Airdrop')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.callback_query.edit_message_text(text=welcome_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
@@ -273,7 +268,7 @@ async def airdrop_button_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.restrict_chat_member(chat_id=query.message.chat_id,user_id=user_id_to_verify,permissions=unmute_permissions)
         logger.info(f"User {user_who_clicked.first_name} ({user_id_to_verify}) telah di-unmute.")
         chosen_link = TOPIC_REDIRECT_LINKS.get(airdrop_choice, "https://t.me")
-        airdrop_names = {'Flagship Ai Agent Airdrop': "Airdrop 1️⃣", 'Midas Airdrop': "Airdrop 2️⃣", 'DATS DePIN Airdrop': "Airdrop 3️⃣"}
+        airdrop_names = {'Midas Airdrop': "Airdrop 1️⃣", 'DATS DePIN Airdrop': "Airdrop 2️⃣"}
         chosen_name = airdrop_names.get(airdrop_choice, "the selected airdrop")
         confirmation_text = (f"✅ <b>ACCESS GRANTED! Welcome, {user_who_clicked.mention_html()}!</b>\n\n"
                              f"Thank you for choosing the <b>{chosen_name}</b> airdrop. You can now chat.\n\n"
